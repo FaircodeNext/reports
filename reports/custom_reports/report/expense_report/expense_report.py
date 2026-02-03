@@ -31,11 +31,12 @@ def get_columns():
         {"label": _("Voucher Type"), "fieldname": "voucher_type", "fieldtype": "Data", "width": 110},
         {"label": _("Voucher No"), "fieldname": "voucher_no", "fieldtype": "Dynamic Link",
          "options": "voucher_type", "width": 140},
-        {"label": _("Description"), "fieldname": "description", "fieldtype": "Data", "width": 220},
-        {"label": _("Income Account"), "fieldname": "income_account", "fieldtype": "Data", "width": 200},
+        # {"label": _("Description"), "fieldname": "description", "fieldtype": "Data", "width": 220},
+        # {"label": _("Income Account"), "fieldname": "income_account", "fieldtype": "Data", "width": 200},
         {"label": _("Income Amount"), "fieldname": "income_amount", "fieldtype": "Currency", "width": 130},
         {"label": _("Expense Account"), "fieldname": "expense_account", "fieldtype": "Data", "width": 200},
         {"label": _("Expense Amount"), "fieldname": "expense_amount", "fieldtype": "Currency", "width": 130},
+        {"label": _("Outstanding Amount"), "fieldname": "outstanding_amount", "fieldtype": "Currency", "width": 130},
         # {"label": _("Cumulative Income"), "fieldname": "cumulative_income", "fieldtype": "Currency", "width": 130},
         # {"label": _("Cumulative Expense"), "fieldname": "cumulative_expense", "fieldtype": "Currency", "width": 130},
         {"label": _("Net Balance"), "fieldname": "net_balance", "fieldtype": "Currency", "width": 130},
@@ -101,9 +102,10 @@ def get_journal_entries(filters):
                 "creation": r.creation,
                 "voucher_no": r.voucher_no,
                 "voucher_type": r.voucher_type,
-                "description": r.description or "",
+                # "description": r.description or "",
                 "income_entries": [],
-                "expense_entries": []
+                "expense_entries": [],
+                "outstanding": 0
             }
 
         # Income: root_type = Income with credit > 0
@@ -128,6 +130,7 @@ def get_journal_entries(filters):
             si.creation,
             si.title AS description,
             si.grand_total as amount,
+            si.outstanding_amount as outstanding,
             acc.account_name,
             'Sales Invoice' as voucher_type
         FROM `tabSales Invoice` si
@@ -144,10 +147,17 @@ def get_journal_entries(filters):
                 "creation": r.creation,
                 "voucher_no": r.voucher_no,
                 "voucher_type": r.voucher_type,
-                "description": r.description or "",
+                # "description": r.description or "",
                 "income_entries": [],
-                "expense_entries": []
+                "expense_entries": [],
+               "outstanding": r.get("outstanding", 0) if hasattr(r, 'get') else (getattr(r, 'outstanding', 0) or 0)
             }
+        else:
+            # update outstanding if present
+            try:
+                vouchers[r.voucher_no]["outstanding"] = r.get("outstanding", 0)
+            except Exception:
+                vouchers[r.voucher_no]["outstanding"] = getattr(r, "outstanding", 0) or 0
         
         # Add income from the revenue accounts in Sales Invoice
         vouchers[r.voucher_no]["income_entries"].append({
@@ -163,6 +173,7 @@ def get_journal_entries(filters):
             pi.creation,
             pi.title AS description,
             pi.grand_total as amount,
+            pi.outstanding_amount as outstanding,
             acc.account_name,
             'Purchase Invoice' as voucher_type
         FROM `tabPurchase Invoice` pi
@@ -181,8 +192,14 @@ def get_journal_entries(filters):
                 "voucher_type": r.voucher_type,
                 "description": r.description or "",
                 "income_entries": [],
-                "expense_entries": []
+                "expense_entries": [],
+                "outstanding": r.get("outstanding", 0) if hasattr(r, 'get') else (getattr(r, 'outstanding', 0) or 0)
             }
+        else:
+            try:
+                vouchers[r.voucher_no]["outstanding"] = r.get("outstanding", 0)
+            except Exception:
+                vouchers[r.voucher_no]["outstanding"] = getattr(r, "outstanding", 0) or 0
         
         # Add expense from Purchase Invoice
         vouchers[r.voucher_no]["expense_entries"].append({
@@ -198,6 +215,7 @@ def process_entries(entries):
     result = []
     cumulative_income = 0
     cumulative_expense = 0
+    cumulative_outstanding = 0
 
     for e in entries:
         total_income = sum(i["amount"] for i in e["income_entries"])
@@ -208,19 +226,22 @@ def process_entries(entries):
 
         cumulative_income += total_income
         cumulative_expense += total_expense
+        outstanding_val = e.get("outstanding", 0)
+        cumulative_outstanding += outstanding_val
 
         result.append({
             "date": e["date"],
             "voucher_type": e["voucher_type"],
             "voucher_no": e["voucher_no"],
-            "description": e["description"],
+            "description": e.get("description", ""),
             "income_account": ", ".join(i["account"] for i in e["income_entries"]),
             "income_amount": total_income,
             "expense_account": ", ".join(i["account"] for i in e["expense_entries"]),
             "expense_amount": total_expense,
+            "outstanding_amount": outstanding_val,
             # "cumulative_income": cumulative_income,
             # "cumulative_expense": cumulative_expense,
-            "net_balance": cumulative_income - cumulative_expense
+            "net_balance": cumulative_income - cumulative_expense-cumulative_outstanding
         })
 
     if result:
@@ -229,9 +250,10 @@ def process_entries(entries):
             "description": _("TOTAL"),
             "income_amount": cumulative_income,
             "expense_amount": cumulative_expense,
+            "outstanding_amount": cumulative_outstanding,
             "cumulative_income": cumulative_income,
             "cumulative_expense": cumulative_expense,
-            "net_balance": cumulative_income - cumulative_expense
+            "net_balance": cumulative_income - cumulative_expense-cumulative_outstanding
         })
 
     return result
